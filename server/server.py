@@ -16,7 +16,7 @@ from sys import platform
 from flask import Flask
 
 from StreamServer import Server
-from extract_ogg import get_header_frames as extract_ogg_header_frames
+from extract_ogg import get_header_frames, split_ogg_data_into_frames
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -87,6 +87,7 @@ class Client:
         self.data_queue = Queue()
 
         self.oggs_opus_header_frames = bytes()
+        self.oggs_opus_header_frames_size = 0
         self.oggs_opus_header_frames_complete = False
 
         self.transcription  = ""
@@ -108,6 +109,23 @@ class Client:
 
                 self.last_sample = self.oggs_opus_header_frames
 
+    def clear_frames_to_n_in_buffer(self, leave_n_frames_in_buffer=5000):
+        if self.oggs_opus_header_frames_complete:
+            with self.mutex:
+                self.phrase_time = None
+                self.temp_file = NamedTemporaryFile().name
+
+                frames = split_ogg_data_into_frames(self.last_sample)
+                countremoveframes = (len(frames) - leave_n_frames_in_buffer) + self.oggs_opus_header_frames_size
+                if countremoveframes <= 0:
+                    return
+
+                print(f"Removing {countremoveframes} frames from buffer with {len(frames)} frames")
+
+                self.last_sample = self.oggs_opus_header_frames
+                for frame in frames[countremoveframes:]:
+                    self.last_sample += frame.raw_data
+
     def stop(self):
         with self.mutex:
             self._client.stop()
@@ -127,7 +145,7 @@ def main():
     settings = load_settings(CONFIG_PATH)
     # Print the settings for demonstration purposes
     for key, value in settings.items():
-        logging.debug(f"{key}: {value}")
+        logging.info(f"{key}: {value}")
 
     # Start the health http-server (flask) in a new thread.
     webserverthread = threading.Thread(target=app.run, kwargs={'debug': False, 'host': settings["HOST"], 'port': 8001})
@@ -242,11 +260,12 @@ def main():
 
                     # set header
                     if client.oggs_opus_header_frames_complete == False:
-                        id_header_frame, comment_header_frames = extract_ogg_header_frames(last_sample)
+                        id_header_frame, comment_header_frames = get_header_frames(last_sample)
                         if id_header_frame is not None and len(comment_header_frames) > 0:
                             client.oggs_opus_header_frames += id_header_frame.raw_data
                             for frame in comment_header_frames:
                                 client.oggs_opus_header_frames += frame.raw_data
+                            client.oggs_opus_header_frames_size = len(comment_header_frames) + 1
                             client.oggs_opus_header_frames_complete = True
                         continue
 
@@ -275,11 +294,12 @@ def main():
                         pass
 
 
-                # If enough time has passed between recordings, consider the phrase complete.
-                # Clear the current working audio buffer to start over with the new data.
-                if client.phrase_time and now - client.phrase_time > timedelta(seconds=settings["RECORD_TIMEOUT"]):
-                    logging.info("Clear audio buffer")
-                    client.clear_buffer()
+                # # If enough time has passed between recordings, consider the phrase complete.
+                # # Clear the current working audio buffer to start over with the new data.
+                # if client.phrase_time and now - client.phrase_time > timedelta(seconds=settings["RECORD_TIMEOUT"]):
+                #     logging.info("Clear audio buffer")
+                #     client.clear_buffer()
+                client.clear_frames_to_n_in_buffer(1000)
 
         # if KeyboardInterrupt stop. If everything else stop and show error.
         except (KeyboardInterrupt, Exception) as e:
