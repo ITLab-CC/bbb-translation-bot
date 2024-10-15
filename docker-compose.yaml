@@ -42,15 +42,13 @@ services:
     #   - "8001:8001"
     #   - "5000:5000"
     #   - "5001:5001"
-    ipc: host
-    tty: true
-    stdin_open: true
     deploy:
       resources:
         reservations:
           devices:
-          - driver: nvidia
-            capabilities: [gpu]
+            - driver: nvidia
+              count: -1
+              capabilities: ["gpu"]
 
   prometheus:
     image: prom/prometheus:latest
@@ -69,7 +67,6 @@ services:
     restart: unless-stopped
     ports:
       - "8000:5000"
-    tty: true
     healthcheck:
       test: ['CMD-SHELL', './venv/bin/python scripts/healthcheck.py']     
     command: --ssl --ga-id MY-GA-ID
@@ -79,8 +76,9 @@ services:
       resources:
         reservations:
           devices:
-          - driver: nvidia
-            capabilities: [gpu]
+            - driver: nvidia
+              count: -1
+              capabilities: ["gpu"]
     networks:
       - bbb-bot
 
